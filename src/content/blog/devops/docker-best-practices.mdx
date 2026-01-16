@@ -1,0 +1,99 @@
+---
+title: "Docker Best Practices for Production"
+description: "Essential best practices for building secure, efficient, and production-ready Docker images"
+pubDate: 2024-01-20
+category: "devops"
+tags: ["docker", "containers", "devops", "security"]
+draft: false
+---
+
+Docker has revolutionized how we deploy applications. However, building production-ready containers requires following certain best practices to ensure security, performance, and maintainability.
+
+## Use Multi-Stage Builds
+
+Multi-stage builds help create smaller, more secure images:
+
+```dockerfile
+# Build stage
+FROM node:20 AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM node:20-slim
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+CMD ["node", "dist/index.js"]
+```
+
+## Don't Run as Root
+
+Always run your application as a non-root user:
+
+```dockerfile
+FROM node:20-slim
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+WORKDIR /app
+COPY --chown=appuser:appgroup . .
+USER appuser
+CMD ["node", "index.js"]
+```
+
+## Use Specific Base Image Tags
+
+Avoid using `latest` tags in production:
+
+```dockerfile
+# Bad
+FROM node:latest
+
+# Good
+FROM node:20.11.0-slim
+```
+
+## Optimize Layer Caching
+
+Order your Dockerfile instructions from least to most frequently changing:
+
+```dockerfile
+FROM node:20-slim
+WORKDIR /app
+
+# Dependencies change less frequently
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Source code changes more frequently
+COPY . .
+
+CMD ["node", "index.js"]
+```
+
+## Use .dockerignore
+
+Create a `.dockerignore` file to exclude unnecessary files:
+
+```
+node_modules
+.git
+.env
+*.md
+tests/
+```
+
+## Health Checks
+
+Add health checks to your containers:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+```
+
+## Conclusion
+
+Following these best practices will help you build Docker images that are secure, efficient, and ready for production deployment.

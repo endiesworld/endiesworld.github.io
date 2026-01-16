@@ -1,0 +1,84 @@
+---
+title: "Building REST APIs with FastAPI"
+description: "A comprehensive guide to building modern, fast, and type-safe REST APIs using FastAPI and Python"
+pubDate: 2024-01-15
+category: "software-engineering"
+tags: ["python", "fastapi", "rest-api", "backend"]
+draft: false
+---
+
+FastAPI has quickly become one of the most popular Python frameworks for building APIs. It combines the simplicity of Python with modern features like automatic OpenAPI documentation, type hints, and async support.
+
+## Why FastAPI?
+
+FastAPI offers several advantages over traditional frameworks:
+
+- **Performance**: One of the fastest Python frameworks available
+- **Type Safety**: Built-in support for Python type hints
+- **Automatic Documentation**: Swagger UI and ReDoc generated automatically
+- **Async Support**: Native support for async/await patterns
+
+## Getting Started
+
+First, install FastAPI and an ASGI server:
+
+```bash
+pip install fastapi uvicorn
+```
+
+Create a simple API:
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"message": "Hello World"}
+
+@app.get("/items/{item_id}")
+async def read_item(item_id: int, q: str | None = None):
+    return {"item_id": item_id, "q": q}
+```
+
+## Request Validation with Pydantic
+
+FastAPI uses Pydantic for data validation:
+
+```python
+from pydantic import BaseModel
+
+class Item(BaseModel):
+    name: str
+    description: str | None = None
+    price: float
+    tax: float | None = None
+
+@app.post("/items/")
+async def create_item(item: Item):
+    return item
+```
+
+## Dependency Injection
+
+FastAPI has a powerful dependency injection system:
+
+```python
+from fastapi import Depends
+
+async def get_db():
+    db = Database()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/users/")
+async def read_users(db: Database = Depends(get_db)):
+    return db.get_users()
+```
+
+## Conclusion
+
+FastAPI provides an excellent developer experience while maintaining high performance. Its automatic documentation and type safety make it ideal for building production-ready APIs.

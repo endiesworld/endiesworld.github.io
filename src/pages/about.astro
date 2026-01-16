@@ -1,0 +1,35 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="About | Engineering Blog"
+  description="Learn more about the author and this blog"
+>
+  <section class="max-w-4xl mx-auto px-4 py-12">
+    <h1 class="text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-8">
+      About
+    </h1>
+
+    <div class="prose">
+      <p>
+        Welcome to my engineering blog! I write about software engineering, DevOps practices,
+        artificial intelligence, and personal projects.
+      </p>
+
+      <h2>What I Write About</h2>
+      <ul>
+        <li><strong>Software Engineering</strong> - Deep dives into programming languages, design patterns, architecture decisions, and best practices.</li>
+        <li><strong>DevOps</strong> - CI/CD pipelines, infrastructure as code, containerization, and deployment strategies.</li>
+        <li><strong>AI & Machine Learning</strong> - Explorations of machine learning, large language models, and practical AI applications.</li>
+        <li><strong>Projects</strong> - Personal projects, open source contributions, and technical experiments.</li>
+      </ul>
+
+      <h2>Connect</h2>
+      <p>
+        Feel free to connect with me on <a href="https://github.com" target="_blank" rel="noopener noreferrer">GitHub</a>
+        or leave a comment on any post. I'd love to hear your thoughts!
+      </p>
+    </div>
+  </section>
+</BaseLayout>

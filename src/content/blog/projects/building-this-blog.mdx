@@ -1,0 +1,93 @@
+---
+title: "Building This Blog with Astro"
+description: "A behind-the-scenes look at how I built this engineering blog using Astro, Tailwind CSS, and MDX"
+pubDate: 2024-01-30
+category: "projects"
+tags: ["astro", "tailwind", "typescript", "blog"]
+draft: false
+---
+
+Welcome to my engineering blog! In this post, I'll walk you through the technical decisions and implementation details of building this site.
+
+## Tech Stack
+
+I chose a modern, performant stack:
+
+- **Astro** - Static site generation with zero JavaScript by default
+- **Tailwind CSS** - Utility-first CSS framework
+- **MDX** - Markdown with JSX components
+- **TypeScript** - Type safety throughout
+
+## Why Astro?
+
+Astro stood out for several reasons:
+
+1. **Performance**: Ships zero JavaScript by default
+2. **Content Collections**: Type-safe content management
+3. **MDX Support**: Mix Markdown with components
+4. **Flexibility**: Bring your own framework (React, Vue, Svelte)
+
+## Key Features
+
+### Dark/Light Mode
+
+The theme toggle persists across sessions using localStorage:
+
+```typescript
+// Check for saved preference or system preference
+const theme = localStorage.getItem('theme') ||
+  (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+// Apply theme
+document.documentElement.classList.toggle('dark', theme === 'dark');
+```
+
+### Content Collections
+
+Type-safe content with Zod schemas:
+
+```typescript
+const blog = defineCollection({
+  type: 'content',
+  schema: z.object({
+    title: z.string(),
+    description: z.string(),
+    pubDate: z.coerce.date(),
+    category: z.enum(['software-engineering', 'devops', 'ai', 'projects']),
+    tags: z.array(z.string()).default([]),
+  }),
+});
+```
+
+### Search with Pagefind
+
+Client-side search powered by Pagefind:
+
+```bash
+# Build site, then index with Pagefind
+astro build && npx pagefind --site dist
+```
+
+### Syntax Highlighting
+
+Shiki provides beautiful code highlighting with theme support:
+
+```javascript
+// This code is highlighted with Shiki!
+function greet(name) {
+  console.log(`Hello, ${name}!`);
+}
+```
+
+## Deployment
+
+The site is deployed to GitHub Pages via GitHub Actions:
+
+1. Push to `main` branch
+2. GitHub Actions builds the site
+3. Pagefind indexes the content
+4. Deploy to GitHub Pages
+
+## Conclusion
+
+Building with Astro has been a great experience. The developer experience is excellent, and the resulting site is fast and maintainable. Feel free to explore the source code and use it as inspiration for your own blog!

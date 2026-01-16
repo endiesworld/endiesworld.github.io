@@ -1,0 +1,56 @@
+---
+import { formatDate, getCategoryLabel } from '../utils/posts';
+
+interface Props {
+  title: string;
+  description: string;
+  pubDate: Date;
+  category: string;
+  tags: string[];
+  href: string;
+  heroImage?: string;
+}
+
+const { title, description, pubDate, category, tags, href, heroImage } = Astro.props;
+---
+
+<article class="group">
+  <a href={href} class="block">
+    {heroImage && (
+      <div class="aspect-video rounded-lg overflow-hidden mb-4 bg-[var(--bg-tertiary)]">
+        <img
+          src={heroImage}
+          alt=""
+          class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+        />
+      </div>
+    )}
+
+    <div class="flex items-center gap-3 text-sm mb-2">
+      <span class="px-2 py-1 rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] font-medium">
+        {getCategoryLabel(category)}
+      </span>
+      <time datetime={pubDate.toISOString()} class="text-[var(--text-muted)]">
+        {formatDate(pubDate)}
+      </time>
+    </div>
+
+    <h3 class="text-xl font-semibold text-[var(--text-primary)] group-hover:text-[var(--color-primary)] transition-colors mb-2">
+      {title}
+    </h3>
+
+    <p class="text-[var(--text-secondary)] line-clamp-2 mb-3">
+      {description}
+    </p>
+
+    {tags.length > 0 && (
+      <div class="flex flex-wrap gap-2">
+        {tags.slice(0, 3).map((tag) => (
+          <span class="text-xs px-2 py-1 rounded-full bg-[var(--bg-secondary)] text-[var(--text-muted)]">
+            #{tag}
+          </span>
+        ))}
+      </div>
+    )}
+  </a>
+</article>

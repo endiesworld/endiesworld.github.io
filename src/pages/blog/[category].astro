@@ -1,0 +1,76 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PostCard from '../../components/PostCard.astro';
+import { getAllPosts, getPostsByCategory, getCategoryLabel, getUniqueCategories } from '../../utils/posts';
+
+export async function getStaticPaths() {
+  const categories = ['software-engineering', 'devops', 'ai', 'projects'];
+  return categories.map((category) => ({
+    params: { category },
+  }));
+}
+
+const { category } = Astro.params;
+const posts = await getPostsByCategory(category);
+const allPosts = await getAllPosts();
+const categories = getUniqueCategories(allPosts);
+const categoryLabel = getCategoryLabel(category);
+---
+
+<BaseLayout
+  title={`${categoryLabel} | Engineering Blog`}
+  description={`Blog posts about ${categoryLabel.toLowerCase()}`}
+>
+  <section class="max-w-4xl mx-auto px-4 py-12">
+    <h1 class="text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-4">
+      {categoryLabel}
+    </h1>
+    <p class="text-lg text-[var(--text-secondary)] mb-8">
+      {posts.length} article{posts.length !== 1 ? 's' : ''} in this category.
+    </p>
+
+    <!-- Category Filter -->
+    <div class="flex flex-wrap gap-2 mb-8">
+      <a
+        href="/blog"
+        class="px-4 py-2 rounded-full bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-sm font-medium hover:bg-[var(--bg-tertiary)] transition-colors"
+      >
+        All
+      </a>
+      {categories.map((cat) => (
+        <a
+          href={`/blog/${cat}`}
+          class:list={[
+            'px-4 py-2 rounded-full text-sm font-medium transition-colors',
+            cat === category
+              ? 'bg-[var(--color-primary)] text-white'
+              : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
+          ]}
+        >
+          {getCategoryLabel(cat)}
+        </a>
+      ))}
+    </div>
+
+    <!-- Posts Grid -->
+    {posts.length > 0 ? (
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {posts.map((post) => (
+          <PostCard
+            title={post.data.title}
+            description={post.data.description}
+            pubDate={post.data.pubDate}
+            category={post.data.category}
+            tags={post.data.tags}
+            href={`/blog/${post.slug}`}
+            heroImage={post.data.heroImage}
+          />
+        ))}
+      </div>
+    ) : (
+      <p class="text-[var(--text-muted)] text-center py-12">
+        No posts in this category yet. Check back soon!
+      </p>
+    )}
+  </section>
+</BaseLayout>
