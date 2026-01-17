@@ -10,6 +10,7 @@ export async function getStaticPaths() {
   }));
 }
 
+const base = import.meta.env.BASE_URL;
 const { category } = Astro.params;
 const posts = await getPostsByCategory(category);
 const allPosts = await getAllPosts();
@@ -32,14 +33,14 @@ const categoryLabel = getCategoryLabel(category);
     <!-- Category Filter -->
     <div class="flex flex-wrap gap-2 mb-8">
       <a
-        href="/blog"
+        href={`${base}/blog`}
         class="px-4 py-2 rounded-full bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-sm font-medium hover:bg-[var(--bg-tertiary)] transition-colors"
       >
         All
       </a>
       {categories.map((cat) => (
         <a
-          href={`/blog/${cat}`}
+          href={`${base}/blog/${cat}`}
           class:list={[
             'px-4 py-2 rounded-full text-sm font-medium transition-colors',
             cat === category
@@ -62,7 +63,7 @@ const categoryLabel = getCategoryLabel(category);
             pubDate={post.data.pubDate}
             category={post.data.category}
             tags={post.data.tags}
-            href={`/blog/${post.slug}`}
+            href={`${base}/blog/${post.slug}`}
             heroImage={post.data.heroImage}
           />
         ))}

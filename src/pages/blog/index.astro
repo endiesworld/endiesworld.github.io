@@ -3,6 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import PostCard from '../../components/PostCard.astro';
 import { getAllPosts, getUniqueCategories, getCategoryLabel } from '../../utils/posts';
 
+const base = import.meta.env.BASE_URL;
 const posts = await getAllPosts();
 const categories = getUniqueCategories(posts);
 ---
@@ -22,14 +23,14 @@ const categories = getUniqueCategories(posts);
     <!-- Category Filter -->
     <div class="flex flex-wrap gap-2 mb-8">
       <a
-        href="/blog"
+        href={`${base}/blog`}
         class="px-4 py-2 rounded-full bg-[var(--color-primary)] text-white text-sm font-medium"
       >
         All
       </a>
       {categories.map((cat) => (
         <a
-          href={`/blog/${cat}`}
+          href={`${base}/blog/${cat}`}
           class="px-4 py-2 rounded-full bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-sm font-medium hover:bg-[var(--bg-tertiary)] transition-colors"
         >
           {getCategoryLabel(cat)}
@@ -47,7 +48,7 @@ const categories = getUniqueCategories(posts);
             pubDate={post.data.pubDate}
             category={post.data.category}
             tags={post.data.tags}
-            href={`/blog/${post.slug}`}
+            href={`${base}/blog/${post.slug}`}
             heroImage={post.data.heroImage}
           />
         ))}
