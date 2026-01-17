@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://endiesworld.github.io/Blog/sitemap-index.xml
+Sitemap: https://endiesworld.github.io/sitemap-index.xml

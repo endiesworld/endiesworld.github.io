@@ -7,7 +7,6 @@ import sitemap from '@astrojs/sitemap';
 // https://astro.build/config
 export default defineConfig({
   site: 'https://endiesworld.github.io',
-  base: '/Blog',
   vite: {
     plugins: [tailwindcss()]
   },
