@@ -1,5 +1,5 @@
 ---
-title: "How to Install Rancher Desktop on Arch Linux (The \"No-Nonsense\" Guide)"
+title: "How to Install Rancher Desktop on Arch Linux."
 description: "A complete guide to installing Rancher Desktop on Arch Linux, including fixing VMX Unsupported errors and verifying your cluster with k9s"
 pubDate: 2026-01-23
 category: "devops"
@@ -7,7 +7,7 @@ tags: ["rancher", "kubernetes", "arch-linux", "kvm", "k9s"]
 draft: false
 ---
 
-If you are running Arch Linux (BTW) and trying to set up a local Kubernetes environment, Rancher Desktop is a fantastic alternative to Docker Desktop. However, getting it to play nice with a custom setup—especially if you are using a window manager like Hyprland—can be tricky.
+If you are running Arch Linux (BTW) and trying to set up a local Kubernetes environment, Rancher Desktop is a fantastic alternative to Docker Desktop. However, getting it to play nice with a custom setup, especially if you are using a window manager like Hyprland, can be tricky.
 
 I recently spent time debugging why Rancher wouldn't start, only to find out it was a mix of missing BIOS flags and a missing credential manager.
 
@@ -58,11 +58,10 @@ Rancher Desktop has two strict requirements that it doesn't always warn you abou
 
 ### 1. Enable KVM Modules
 
-Even if BIOS is ready, the Linux kernel needs the drivers loaded.
+The KVM drivers are usually loaded automatically by Arch Linux, but we should verify they are active.
 
 ```bash
-# Load the module (for Intel CPUs)
-sudo modprobe kvm_intel
+lsmod | grep kvm
 
 # Add your user to the KVM group so you don't need root to run VMs
 sudo usermod -aG kvm $USER
@@ -146,7 +145,7 @@ Once inside the interface (as seen in the screenshot below):
 
 - **View All Pods (0)**: By default, k9s might only show the default namespace (which is usually empty). Press the 0 key (zero) to switch the view to All Namespaces.
 - You will see pods like coredns, traefik, and local-path-provisioner appear.
-- Look for the blue rows—these indicate active, selected items.
+- Look for the blue rows, these indicate active, selected items.
 - **Check Status**: The STATUS column is your best friend. You want to see Running (green/white) or Completed. If you see red text here, that pod is crashing.
 - **Quit (:q)**: To exit k9s and return to your terminal, type :q and hit Enter.
 
