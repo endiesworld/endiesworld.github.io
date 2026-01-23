@@ -48,7 +48,7 @@ body {
   --tw-prose-links: var(--color-primary);
   --tw-prose-code: var(--text-primary);
   --tw-prose-pre-bg: var(--code-bg);
-  max-width: 65ch;
+  max-width: none;
   line-height: 1.75;
 }
 
