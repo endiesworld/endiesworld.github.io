@@ -1,0 +1,292 @@
+---
+title: "Flux CrashLoopBackOff on K3s After a LAN IP Change: Diagnosis, Fix, and Prevention"
+description: "A real world GitOps failure in a K3s homelab: Flux controllers crashloop because pods can't reach the Kubernetes API service. Here's how to diagnose it fast, fix it correctly, and prevent it from happening again."
+pubDate: 2026-01-29
+category: "devops"
+tags: ["DevOps", "Kubernetes", "K3s", "FluxCD", "GitOps", "Homelab", "Networking", "Troubleshooting"]
+heroImage: "/images/devops/home-lab.jpeg"
+draft: false
+---
+
+GitOps feels magical until it doesn't.
+
+I hit a failure that looked like a "Flux problem" at first, but it turned out to be pure Kubernetes plumbing: **pods could not reach the Kubernetes API via the in cluster service IP**. That single break caused every Flux controller to crashloop, and bootstrap to time out.
+
+This post walks through the incident as a repeatable troubleshooting playbook:
+
+* How to recognize the signature
+* How to prove the exact failure path
+* How to fix the root cause (not just symptoms)
+* How to prevent it from recurring in a homelab
+
+> Setup context: **K3s single node** cluster (`sochi`), Flux bootstrap to GitHub, Service CIDR `10.43.0.0/16`, Pod CIDR `10.42.0.0/16`.
+
+## The Symptom: Flux Bootstrap "Succeeds"… Then Fails
+
+Bootstrap output looked initially healthy:
+
+* Repo cloned
+* Manifests generated and committed
+* Components installed in `flux-system`
+
+Then it stalled and died with timeouts:
+
+* `context deadline exceeded`
+* Controllers not ready
+
+And `kubectl` showed the real pain:
+
+```bash
+kubectl get pods -A
+# flux-system: source-controller, kustomize-controller, helm-controller, notification-controller
+# STATUS: CrashLoopBackOff
+```
+
+At this point, it's tempting to reinstall Flux and keep trying. Don't.
+
+When controllers crashloop immediately, the log line matters.
+
+## Step 1: Don't Guess, Read the Crash Reason
+
+For CrashLoopBackOff you want previous logs:
+
+```bash
+kubectl -n flux-system logs deploy/source-controller --previous --tail=200
+kubectl -n flux-system logs deploy/kustomize-controller --previous --tail=200
+kubectl -n flux-system logs deploy/helm-controller --previous --tail=200
+kubectl -n flux-system logs deploy/notification-controller --previous --tail=200
+```
+
+In my case, every controller failed the same way:
+
+* Could not query Kubernetes API discovery
+* Tried to call the in cluster API service
+* Failed with a routing error
+
+The key signature:
+
+```
+Get "https://10.43.0.1:443/api": dial tcp 10.43.0.1:443: connect: no route to host
+```
+
+If you see anything like:
+
+* `no route to host`
+* `host is unreachable`
+* `i/o timeout`
+* `connection refused`
+
+…to the Kubernetes service IP (kubernetes.default), the issue is cluster networking / service routing, not Flux config.
+
+## Step 2: Prove It from Inside the Cluster
+
+Flux runs inside the cluster. So test from a pod, always.
+
+Create a quick debug pod and curl the API service:
+
+```bash
+kubectl run -n flux-system --rm -it api-test \
+  --image=curlimages/curl:8.5.0 --restart=Never -- sh
+```
+
+Inside:
+
+```bash
+curl -vk https://10.43.0.1:443/version
+```
+
+What you want:
+
+* Connection succeeds
+* Response might be 401 Unauthorized (that's fine, no credentials)
+* The point is: network reachability to the API service is working
+
+What I got initially:
+
+```
+Host is unreachable
+```
+
+That's a slam dunk: pods cannot reach the apiserver via ClusterIP.
+
+No Flux controller can function in that state.
+
+## Step 3: Check What kubernetes.default Is Actually Pointing To
+
+The kubernetes service is a ClusterIP (10.43.0.1), but it routes to an endpoint (your apiserver).
+
+Check the endpoint:
+
+```bash
+kubectl -n default get endpoints kubernetes -o wide
+```
+
+Mine showed:
+
+```
+kubernetes 192.168.0.140:6443
+```
+
+Then I checked the node NIC:
+
+```bash
+ip -4 addr show eno1
+```
+
+And the node was now:
+
+```
+192.168.1.101/24
+```
+
+There's the root cause.
+
+## The Real Failure Chain
+
+1. Flux controllers call `https://kubernetes.default.svc` → ClusterIP `10.43.0.1:443`
+2. kube-proxy / service NAT sends that to the endpoint IP
+3. Endpoint IP was stale, still pointing to the old LAN subnet (192.168.0.140)
+4. Pods can't route to 192.168.0.140 anymore → Host unreachable
+5. Flux controllers crashloop immediately during startup API discovery
+
+This wasn't Flux being broken.
+This was the cluster lying about where the apiserver lives.
+
+## The Fix: Update K3s API Endpoint to Match the Current Node IP
+
+In my case, simply restarting k3s refreshed the endpoint:
+
+```bash
+sudo systemctl restart k3s
+kubectl -n default get endpoints kubernetes -o wide
+```
+
+After restart:
+
+```
+kubernetes 192.168.1.101:6443 ✅
+```
+
+Now re test in cluster connectivity:
+
+```bash
+kubectl run -n flux-system --rm -it api-test \
+  --image=curlimages/curl:8.5.0 --restart=Never -- sh
+```
+
+Inside:
+
+```bash
+curl -vk https://10.43.0.1:443/version
+```
+
+This time the connection succeeded and returned 401 Unauthorized (expected).
+
+At that point Flux can run.
+
+## Bring Flux Back Up (Verification)
+
+Once the API service works, Flux controllers should recover automatically. If you want to be explicit:
+
+```bash
+kubectl -n flux-system rollout restart \
+  deploy/source-controller \
+  deploy/kustomize-controller \
+  deploy/helm-controller \
+  deploy/notification-controller
+```
+
+Then verify:
+
+```bash
+flux check
+flux get all -A
+kubectl -n flux-system get pods -o wide
+```
+
+Everything should be READY / Running (1/1).
+
+## Prevention: Don't Let Your Node IP Drift
+
+This incident happened because the node LAN IP changed while K3s still referenced the old address.
+
+Here's how to avoid repeating it.
+
+### 1. Make the Node IP Stable
+
+Homelab rule: Kubernetes nodes should not "float" IPs.
+
+* Prefer a DHCP reservation for your node MAC address, or
+* Configure a static IP on your LAN
+
+If your node IP changes, you're effectively yanking the rug out from under:
+
+* Control plane endpoint resolution
+* Service routing
+* Anything that depends on stable connectivity (GitOps, controllers, webhooks)
+
+### 2. Pin K3s Identity to the Correct Interface/IP
+
+Set real values in `/etc/rancher/k3s/config.yaml` (no placeholders), e.g.:
+
+```yaml
+node-ip: 192.168.1.101
+advertise-address: 192.168.1.101
+flannel-iface: eno1
+
+tls-san:
+  - 192.168.1.101
+  - sochi
+
+write-kubeconfig-mode: "0644"
+```
+
+### 3. Add a Quick "Sanity Check" After Any Network Change
+
+Any time you touch network settings, run:
+
+```bash
+kubectl -n default get endpoints kubernetes -o wide
+ip -4 addr show eno1
+```
+
+If those don't agree (or the endpoint points to an unreachable subnet), restart k3s and re check.
+
+### 4. Optional Guardrail: Tiny Mismatch Detector
+
+You can automate a simple mismatch check:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFACE="eno1"
+NODE_IP="$(ip -4 addr show "$IFACE" | awk '/inet /{print $2}' | cut -d/ -f1 | head -n1)"
+EP_IP="$(kubectl -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+
+if [[ -n "${NODE_IP}" && -n "${EP_IP}" && "${NODE_IP}" != "${EP_IP}" ]]; then
+  echo "[ALERT] kubernetes endpoint mismatch: endpoint=${EP_IP} node=${NODE_IP}"
+  echo "Suggested action: sudo systemctl restart k3s"
+fi
+```
+
+## Troubleshooting Cheat Sheet
+
+When Flux controllers crashloop right after bootstrap:
+
+1. Read controller logs (`--previous`)
+2. If you see failures to reach `10.43.0.1:443`, do:
+   * `kubectl -n default get endpoints kubernetes -o wide`
+   * From a pod: `curl -vk https://10.43.0.1:443/version`
+3. If endpoints point to a stale IP, restart k3s
+4. Verify endpoint updates and in cluster curl connects
+5. `flux check` to confirm recovery
+
+## Closing Thought
+
+This was a perfect reminder: GitOps reliability depends on boring fundamentals.
+
+Flux didn't fail because GitOps is flaky.
+Flux failed because the cluster couldn't reliably route to its own control plane.
+
+Make your node IP stable, pin your K3s identity properly, and keep a simple in cluster API reachability test in your runbook and you'll avoid losing hours to "mysterious" controller crashloops.
