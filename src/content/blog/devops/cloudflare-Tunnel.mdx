@@ -1,0 +1,359 @@
+---
+title: "Cloudflare Tunnel on K3s with Flux: Expose a ClusterIP App Without Port Forwarding"
+description: "Learn how to expose a Kubernetes ClusterIP service to the internet using Cloudflare Tunnel (cloudflared) on K3s, managed by Flux GitOps. This guide covers the full setup, Kubernetes manifests, DNS configuration, and a debugging walkthrough for 404 and 530 errors."
+pubDate: 2026-02-03
+category: "devops"
+tags: ["DevOps", "Kubernetes", "K3s", "Cloudflare", "Cloudflare Tunnel", "cloudflared", "GitOps", "FluxCD", "Homelab", "Troubleshooting"]
+heroImage: "/images/devops/http-traffic.png"
+draft: false
+---
+
+Exposing services running inside a Kubernetes cluster to the internet usually means dealing with open firewall ports, LoadBalancer services, or port forwarding rules that tie you to a specific IP. Cloudflare Tunnel eliminates all of that.
+
+This guide walks through deploying **cloudflared** (the Cloudflare Tunnel connector) inside a K3s cluster, managed with Flux GitOps. The example application is **Linkding**, a bookmark manager running as a ClusterIP service, but the pattern works for any internal service.
+
+By the end of this post you will understand:
+
+1. What "creating a tunnel" actually means at the infrastructure level
+2. How each Kubernetes manifest contributes to the setup
+3. How secrets and config are wired together
+4. How to create DNS records that route through the tunnel
+5. How to debug the two most common failure modes: **HTTP 404** and **HTTP 530**
+
+> **Setup context:** K3s single node cluster, Flux GitOps managing all manifests, Cloudflare managing DNS for the domain.
+
+---
+
+## Prerequisites
+
+Before starting, make sure you have the following in place:
+
+- **A Cloudflare account.** Sign up at [cloudflare.com](https://www.cloudflare.com) if you do not have one. The free tier is sufficient.
+- **A domain registered with (or using) Cloudflare DNS.** Your domain's nameservers must point to Cloudflare so that it can manage DNS records and route traffic through the tunnel. You can either register a new domain directly through Cloudflare or transfer an existing domain's DNS to Cloudflare by updating its nameservers.
+- **A running K3s cluster** with `kubectl` access from your local machine.
+- **`cloudflared` CLI installed** on your local machine. Installation instructions are available in the [official docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+
+---
+
+## How Cloudflare Tunnel Works
+
+Before jumping into manifests, it helps to understand the two distinct phases involved.
+
+### Phase A: Provisioning (one time admin step)
+
+You use the `cloudflared` CLI on your local machine to:
+
+- Authenticate to your Cloudflare account
+- Create a named tunnel
+- Generate a **tunnel credentials file** (a JSON file containing the tunnel's identity)
+
+This step only happens once per tunnel. You do not run the tunnel on your local machine.
+
+### Phase B: Runtime (always on)
+
+Kubernetes runs `cloudflared` as a Deployment. Those pods:
+
+- Mount the tunnel credentials from a Kubernetes Secret
+- Mount the tunnel config from a ConfigMap
+- Establish **outbound** connections to the Cloudflare edge network
+- Forward incoming traffic to in cluster services based on ingress rules defined in the config
+
+The key insight: traffic flows **outbound** from your cluster to Cloudflare. No inbound ports need to be opened. Cloudflare edge handles the public facing side and routes requests back through the tunnel.
+
+---
+
+## Repository Layout (Flux Friendly)
+
+If you are using Flux to manage your cluster, a clean directory structure keeps things maintainable. Here is one approach:
+
+- **base/** contains the core application resources (Deployment, Service, PVC)
+- **staging/** adds environment specific resources like cloudflared
+
+```txt
+apps/
+├── base/
+│   └── myapp/
+│       ├── deployment.yaml
+│       ├── kustomization.yaml
+│       ├── namespace.yaml
+│       ├── service.yaml
+│       └── storage.yaml
+└── staging/
+    └── myapp/
+        ├── cloudflare.yaml
+        └── kustomization.yaml
+```
+
+The `cloudflare.yaml` file in the staging overlay contains the cloudflared Deployment, ConfigMap, and any related resources. This separation means the base application definition stays clean and environment agnostic.
+
+---
+
+## Step 1: Create the Tunnel
+
+On your local machine, install `cloudflared` and authenticate:
+
+```bash
+cloudflared tunnel login
+```
+
+This opens a browser window where you authorize cloudflared to access your Cloudflare account. After authentication, a certificate file is saved locally.
+
+Next, create a named tunnel:
+
+```bash
+cloudflared tunnel create my-k8s-tunnel
+```
+
+This does two things:
+
+1. Registers a tunnel with your Cloudflare account
+2. Generates a credentials file at `~/.cloudflared/<YOUR_TUNNEL_UUID>.json`
+
+The UUID is your tunnel's unique identifier. You will need both the UUID and the credentials file in the next steps.
+
+> **Important:** You are only using the CLI here to create the tunnel and retrieve credentials. The tunnel itself will run inside Kubernetes, not on your local machine.
+
+---
+
+## Step 2: Store Tunnel Credentials in Kubernetes
+
+The credentials JSON file authorizes cloudflared pods to connect as your tunnel. It needs to be available inside the cluster as a Kubernetes Secret.
+
+```bash
+kubectl -n <YOUR_NAMESPACE> create secret generic tunnel-credentials \
+  --from-file=credentials.json=$HOME/.cloudflared/<YOUR_TUNNEL_UUID>.json
+```
+
+A few things to note about this command:
+
+- **Secret name** is `tunnel-credentials`. This is referenced in the Deployment's volume definition.
+- **Key name** is `credentials.json`. When this Secret is mounted as a volume, this key becomes the filename inside the pod.
+- **Namespace** must match where the cloudflared Deployment will run.
+
+---
+
+## Step 3: Deploy cloudflared with a ConfigMap
+
+The cloudflared pod needs two things mounted into it:
+
+| What | Source | Mount Path |
+|:---|:---|:---|
+| Tunnel config | ConfigMap | `/etc/cloudflared/config/config.yaml` |
+| Tunnel credentials | Secret | `/etc/cloudflared/creds/credentials.json` |
+
+Here is the complete manifest (`cloudflare.yaml`):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+spec:
+  selector:
+    matchLabels:
+      app: cloudflared
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+      - name: cloudflared
+        image: cloudflare/cloudflared:latest
+        args:
+        - tunnel
+        - --config
+        - /etc/cloudflared/config/config.yaml
+        - run
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 2000
+          failureThreshold: 1
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: config
+          mountPath: /etc/cloudflared/config
+          readOnly: true
+        - name: creds
+          mountPath: /etc/cloudflared/creds
+          readOnly: true
+      volumes:
+      - name: creds
+        secret:
+          secretName: tunnel-credentials
+      - name: config
+        configMap:
+          name: cloudflared
+          items:
+          - key: config.yaml
+            path: config.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared
+data:
+  config.yaml: |
+    tunnel: <YOUR_TUNNEL_UUID>
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+
+    ingress:
+    - hostname: bookmarks.yourdomain.com
+      service: http://linkding:9090
+    - service: http_status:404
+```
+
+### Breaking Down the Key Parts
+
+**Deployment:**
+
+- `replicas: 2` gives you redundancy. If one pod restarts, the other maintains the tunnel connection.
+- The `--config` flag points cloudflared to the ConfigMap mounted config file.
+- The liveness probe hits cloudflared's built in `/ready` endpoint on port 2000. This returns 200 only when there is an active connection to the Cloudflare edge.
+- Two volumes are mounted: one for config (from the ConfigMap), one for credentials (from the Secret).
+
+**ConfigMap (tunnel config):**
+
+- `tunnel` — Your tunnel UUID from Step 1.
+- `credentials-file` — The path where the Secret is mounted inside the pod.
+- `metrics` — Enables the metrics and readiness endpoints on port 2000.
+- `no-autoupdate` — Prevents cloudflared from updating itself inside the container. Updates should be handled by changing the container image.
+
+**Ingress rules** are evaluated top to bottom. The last rule (`http_status:404`) is a **required** catch all that returns 404 for any request that does not match a previous rule. Cloudflare requires this catch all entry to be present.
+
+> **Replace the placeholder values** with your own: `<YOUR_TUNNEL_UUID>` is the UUID from Step 1, `bookmarks.yourdomain.com` is the public hostname you want to expose, and `http://linkding:9090` is the in cluster service URL (format: `http://<service-name>:<port>`).
+
+---
+
+## Step 4: Create a DNS Record
+
+For Cloudflare to route public traffic through the tunnel, you need a DNS record pointing your hostname to the tunnel.
+
+You can create this with the CLI:
+
+```bash
+cloudflared tunnel route dns <YOUR_TUNNEL_UUID> bookmarks.yourdomain.com
+```
+
+This creates a CNAME record in your Cloudflare DNS zone:
+
+```
+bookmarks.yourdomain.com  →  <YOUR_TUNNEL_UUID>.cfargotunnel.com
+```
+
+Alternatively, you can create this record manually in the Cloudflare dashboard under **DNS > Records**. Add a CNAME record with the target set to `<YOUR_TUNNEL_UUID>.cfargotunnel.com`.
+
+> **Critical:** The hostname in this DNS record must **exactly** match a hostname in your cloudflared ingress rules from Step 3. A mismatch here is the single most common cause of 404 errors.
+
+---
+
+## Step 5: Verify the Application from Inside the Cluster
+
+Before blaming Cloudflare for any issues, always verify that the target service is reachable from within the cluster. This eliminates an entire class of problems.
+
+Check the Service and its Endpoints:
+
+```bash
+kubectl -n <YOUR_NAMESPACE> get svc linkding -o wide
+kubectl -n <YOUR_NAMESPACE> get endpoints linkding -o wide
+```
+
+The Endpoints output should show pod IPs. If it shows `<none>`, the Service selector does not match any running pods.
+
+Then test connectivity from inside the cluster using a temporary pod:
+
+```bash
+kubectl -n <YOUR_NAMESPACE> run curltest --rm -it --restart=Never \
+  --image=curlimages/curl -- curl -i http://linkding:9090/
+```
+
+You should see a valid HTTP response (200, 301, or 302 are all normal). If this fails, the problem is with your application or Service definition, not with Cloudflare Tunnel.
+
+---
+
+## Debugging: 404 vs 530
+
+These are the two most common errors when setting up Cloudflare Tunnel. They look similar in the browser but have completely different root causes.
+
+### HTTP 530: Tunnel Not Connected
+
+A **530** error means Cloudflare received the request but could not reach your tunnel. The tunnel is either not running, not authenticated, or not connected to the edge.
+
+**Common causes:**
+
+- cloudflared pods are not running or are in CrashLoopBackOff
+- The credentials file is missing or does not match the tunnel UUID
+- The tunnel UUID in the ConfigMap does not match the actual tunnel you created
+
+**How to diagnose:**
+
+```bash
+# Check if cloudflared pods are running
+kubectl -n <YOUR_NAMESPACE> get pods -l app=cloudflared
+
+# Check cloudflared logs for connection errors
+kubectl -n <YOUR_NAMESPACE> logs -l app=cloudflared --tail=50
+```
+
+Healthy logs will show lines like `Connection registered` with connector IDs. If you see authentication errors or repeated connection retries, verify that your credentials Secret matches the tunnel UUID in the ConfigMap.
+
+### HTTP 404: Tunnel Connected, No Matching Ingress Rule
+
+A **404** from Cloudflare Tunnel means the tunnel **is** working and cloudflared **is** connected, but no ingress rule matched the incoming request's hostname. The request fell through to the catch all rule (`http_status:404`).
+
+**Common causes:**
+
+- The hostname in the browser does not match any `hostname` entry in the ingress rules
+- A typo in the hostname (in either the ConfigMap or the DNS record)
+- The DNS CNAME points to the tunnel, but the ConfigMap ingress does not list that hostname
+- The ConfigMap was updated but the cloudflared pods were not restarted to pick up changes
+
+**How to diagnose:**
+
+```bash
+# Verify the ConfigMap has the correct hostname
+kubectl -n <YOUR_NAMESPACE> get configmap cloudflared -o yaml
+
+# Restart cloudflared pods to pick up any ConfigMap changes
+kubectl -n <YOUR_NAMESPACE> rollout restart deployment cloudflared
+```
+
+### Quick Diagnostic Flowchart
+
+1. **Getting 530?** → The tunnel is not connected. Check pod status and logs.
+2. **Getting 404?** → The tunnel works but routing is wrong. Verify that the hostname in the request matches an ingress rule in the ConfigMap exactly.
+3. **Getting an error from your app (5xx, connection refused)?** → The tunnel and routing are fine. Debug the application itself using the in cluster curl test from Step 5.
+
+> **Debugging tip:** You can add a `hello_world` test entry in your ingress rules to verify tunnel connectivity independently of your application:
+>
+> ```yaml
+> ingress:
+> - hostname: hello.yourdomain.com
+>   service: hello_world
+> - hostname: bookmarks.yourdomain.com
+>   service: http://linkding:9090
+> - service: http_status:404
+> ```
+>
+> Create a DNS record for `hello.yourdomain.com` pointing to your tunnel. If that hostname loads the built in Cloudflare hello page but your app hostname does not, the problem is in the connection from cloudflared to your in cluster service, not in the tunnel itself.
+
+---
+
+## Wrapping Up
+
+Cloudflare Tunnel is one of the cleanest ways to expose Kubernetes services without touching firewall rules or leaking your home IP. The moving parts are minimal once you understand them:
+
+1. **Create the tunnel** and grab the credentials file
+2. **Store credentials** as a Kubernetes Secret
+3. **Deploy cloudflared** with a ConfigMap defining your ingress rules
+4. **Create a DNS record** pointing to the tunnel
+5. **Verify** end to end, from in cluster curl to browser
+
+When something breaks, the 530 vs 404 distinction tells you exactly where to look: 530 means the tunnel is down, 404 means the tunnel is up but routing is wrong.
+
+If you are managing your cluster with Flux or any GitOps tool, commit the Deployment and ConfigMap manifests to your repo and let reconciliation handle the rest. The only manual steps are the initial tunnel creation and the Secret, which should not live in Git.
