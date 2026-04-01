@@ -627,6 +627,32 @@ cilium status --wait
 kubectl get nodes -o wide
 kubectl get pods -A
 ```
+---
+
+## Step 11: What's Next — Join the Workers
+
+The workers are reachable from the control plane by private IP. That means the worker join workflow is:
+
+1. SSH to control plane (with agent forwarding).
+2. From the control plane or via `ProxyJump`, SSH to the worker private IP.
+3. Run the pre-flight setup on each worker (same as Step 10, minus `kubeadm init`).
+4. Copy and run the `kubeadm join` command from the control plane on each worker.
+
+Get the join command from the control plane:
+
+```bash
+kubeadm token create --print-join-command
+```
+
+Run it on each worker node:
+
+```bash
+sudo kubeadm join <control-plane-private-ip>:6443 \
+  --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash>
+```
+---
+Then back on the control plane:
 
 Expected output once everything is running:
 
@@ -657,40 +683,7 @@ kube-system   kube-proxy-tk4ms                                           1/1    
 kube-system   kube-scheduler-kubernetes-cluster-control-plane            1/1     Running   0          2d8h   172.16.1.6   kubernetes-cluster-control-plane   <none>           <none>
 ```
 
-That output confirmed the control-plane VM was healthy, the network design was viable, and kubeadm bootstrap worked end to end.
-
----
-
-## Step 11: What's Next — Join the Workers
-
-The workers are reachable from the control plane by private IP. That means the worker join workflow is:
-
-1. SSH to control plane (with agent forwarding).
-2. From the control plane or via `ProxyJump`, SSH to the worker private IP.
-3. Run the pre-flight setup on each worker (same as Step 10, minus `kubeadm init`).
-4. Copy and run the `kubeadm join` command from the control plane on each worker.
-
-Get the join command from the control plane:
-
-```bash
-kubeadm token create --print-join-command
-```
-
-Run it on each worker node:
-
-```bash
-sudo kubeadm join <control-plane-private-ip>:6443 \
-  --token <token> \
-  --discovery-token-ca-cert-hash sha256:<hash>
-```
-
-Then back on the control plane:
-
-```bash
-kubectl get nodes
-```
-
-Both workers should appear as `Ready` once Cilium has assigned them a network identity.
+That output confirmed the control-plane VM was healthy, the network design was viable, and kubeadm bootstrap worked end to end, and both workers appear as `Ready` once Cilium has assigned them a network identity.
 
 ---
 
